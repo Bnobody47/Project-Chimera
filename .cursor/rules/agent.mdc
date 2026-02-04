@@ -1,0 +1,4 @@
+Tenx MCP configuration for Cursor.
+
+This agent is configured to use the Tenx feedback analytics MCP server defined in `.cursor/mcp.json`.
+
