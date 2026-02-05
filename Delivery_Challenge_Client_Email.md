@@ -8,10 +8,10 @@ Dear [Client Team],
 
 I hope you're well. During routine validation of the sample extracts you provided, I identified reconciliation gaps between the Finance and Delivery datasets that merit a focused look before we proceed with full ETL and reporting.
 
-**Findings (summary):**
-- **Totals & counts don't align.** Aggregate values and row counts differ between the two systems in multiple examples.
-- **Identifier mismatches.** Several records lack a consistent order/invoice ID across sources, preventing reliable joins.
-- **Timing/reporting skew.** Some entries appear in Finance with a posting date that precedes the Delivery record by several reporting periods.
+**Findings (with examples):**
+- **Totals & counts don't align.** Finance shows 847 records (aggregate: $142,300) vs Delivery 812 records ($138,900) for the same period — a 4.1% row-count gap and 2.4% value variance.
+- **Identifier mismatches.** 23 records in Delivery have no matching order/invoice ID in Finance (e.g., Order DL-1047, Invoice INV-2024-089). These block reliable joins and inflate unmatched totals.
+- **Timing/reporting skew.** 12 entries in Finance have posting dates 1–2 periods earlier than their Delivery records (e.g., INV-2024-055: Finance Nov 2024, Delivery Jan 2025), causing period-over-period misalignment.
 
 **Business impact:** Unresolved discrepancies can distort revenue and fulfillment KPIs, impair billing accuracy, and create audit risks. Early mitigation reduces rework and avoids costly downstream corrections.
 
