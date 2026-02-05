@@ -1,0 +1,12 @@
+.git
+.github
+__pycache__
+*.pyc
+.env
+.venv
+venv
+.cursor
+*.pdf
+Delivery_Challenge_Client_Email.md
+research_architecture_strategy.md
+research/

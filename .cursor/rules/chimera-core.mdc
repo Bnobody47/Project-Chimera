@@ -1,0 +1,17 @@
+---
+description: Core rules for Project Chimera development.
+alwaysApply: true
+---
+
+# Project Chimera Rules
+
+- Project Context: This is Project Chimera, an autonomous influencer system (AiQEM).
+- Prime Directive: NEVER generate code without checking specs/ first.
+- Traceability: Explain your plan before writing code; cite spec sections that guide the change.
+- MCP-first: all external I/O must go through MCP tools/resources; avoid direct platform SDK calls.
+- HITL awareness: preserve confidence-tier logic and sensitive-topic escalation when touching review flows.
+- Persona consistency: load persona from `SOUL.md`; inject `character_reference_id` on media tasks.
+- Budget governance: commerce actions must pass through CFO Judge budget checks; default to testnets/sim modes.
+- Security: never log secrets/keys; use env/secret manager placeholders only.
+- Testing: add/update tests before implementations; keep failing tests when defining contracts (TDD).
+- Observability: keep Tenx MCP Sense connected; do not remove telemetry hooks.
