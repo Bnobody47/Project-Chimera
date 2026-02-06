@@ -403,6 +403,139 @@ ORDER BY r.created_at ASC;
 - AuditEvent: `{event_id, actor_id, action, payload, timestamp, state_version}`
 - VideoMetadata (NoSQL): `{video_id, owner_agent_id, metrics{minute_buckets, hour_buckets}, tags[], canonical_attrs{title,duration,language}}`
 
+## Backend API Contract
+
+### Service Endpoints
+
+#### Planner Service
+
+**POST** `/api/v1/planner/decompose`
+- **Request**: `{ campaign_id: UUID, goal_description: string, constraints: JSON }`
+- **Response**: `{ task_ids: UUID[], dag: JSON }`
+- **Error Codes**: `400` (invalid goal), `404` (campaign not found), `500` (planning failure)
+- **Maps to**: Planner agent workflow; creates tasks in `task_queue`
+
+**GET** `/api/v1/planner/tasks/pending`
+- **Query Params**: `priority?`, `limit?`, `offset?`
+- **Response**: `{ tasks: Task[], total: int }`
+- **Error Codes**: `400` (invalid params), `500` (query failure)
+- **Maps to**: Worker polling for tasks
+
+#### Worker Service
+
+**POST** `/api/v1/worker/claim-task`
+- **Request**: `{ worker_id: UUID, task_types?: string[] }`
+- **Response**: `{ task: Task | null }`
+- **Error Codes**: `400` (invalid worker_id), `500` (queue error)
+- **Maps to**: Worker pulling from `task_queue` via Redis
+
+**POST** `/api/v1/worker/submit-result`
+- **Request**: `{ task_id: UUID, worker_id: UUID, status: enum, artifact_ref?: string, confidence_score?: float, reasoning_trace?: string, state_version: bigint }`
+- **Response**: `{ result_id: UUID, requires_hitl: boolean }`
+- **Error Codes**: `400` (invalid payload), `409` (OCC conflict - state_version mismatch), `500` (save failure)
+- **Maps to**: Worker → Judge handoff; pushes to `review_queue`
+
+#### Judge Service
+
+**POST** `/api/v1/judge/review`
+- **Request**: `{ result_id: UUID }`
+- **Response**: `{ decision: enum['approve', 'reject', 'escalate'], hitl_queue_id?: UUID }`
+- **Error Codes**: `400` (invalid result), `404` (result not found), `500` (judgment failure)
+- **Maps to**: Judge workflow; applies confidence tiers, OCC validation
+
+**GET** `/api/v1/judge/hitl-queue`
+- **Query Params**: `agent_id?`, `status?`, `limit?`
+- **Response**: `{ items: HITLItem[], total: int }`
+- **Error Codes**: `400` (invalid params)
+- **Maps to**: Human reviewer dashboard
+
+**POST** `/api/v1/judge/hitl-decision`
+- **Request**: `{ hitl_queue_id: UUID, decision: enum['approve', 'reject', 'edit'], edit_notes?: string }`
+- **Response**: `{ success: boolean, task_id?: UUID }`
+- **Error Codes**: `400` (invalid decision), `404` (item not found), `500` (update failure)
+- **Maps to**: Human-in-the-loop approval/rejection
+
+#### Agent Management
+
+**GET** `/api/v1/agents`
+- **Query Params**: `tenant_id?`, `status?`
+- **Response**: `{ agents: Agent[], total: int }`
+- **Error Codes**: `403` (unauthorized tenant access), `500` (query failure)
+
+**GET** `/api/v1/agents/{agent_id}`
+- **Response**: `{ agent: Agent, persona: AgentPersona, wallet_policy: WalletPolicy }`
+- **Error Codes**: `404` (agent not found), `403` (tenant isolation violation)
+
+**POST** `/api/v1/agents/{agent_id}/campaigns`
+- **Request**: `{ goal_description: string, constraints: JSON }`
+- **Response**: `{ campaign_id: UUID }`
+- **Error Codes**: `400` (invalid goal), `404` (agent not found), `500` (creation failure)
+
+#### Commerce (CFO Judge)
+
+**GET** `/api/v1/commerce/wallet/{agent_id}/balance`
+- **Response**: `{ balance_usdc: decimal, balance_eth: decimal }`
+- **Error Codes**: `404` (agent/wallet not found), `500` (MCP tool failure)
+- **Maps to**: `wallet_get_balance` MCP tool
+
+**POST** `/api/v1/commerce/wallet/{agent_id}/transfer`
+- **Request**: `{ to_address: string, amount_usdc: decimal, asset?: string, memo?: string }`
+- **Response**: `{ tx_hash: string, status: enum['approved', 'blocked'], error?: string }`
+- **Error Codes**: `400` (invalid params), `402` (budget exceeded), `404` (agent not found), `500` (transaction failure)
+- **Maps to**: `wallet_transfer` MCP tool + CFO budget check decorator
+
+#### Skills API
+
+**POST** `/api/v1/skills/trend-fetcher`
+- **Request**: `{ agent_id: UUID, niches: string[], relevance_threshold: float, lookback_hours: int }`
+- **Response**: `{ trends: Trend[], total: int }` where `Trend = { topic: string, score: float, sources: string[], suggested_tasks: UUID[] }`
+- **Error Codes**: `400` (invalid params), `404` (agent not found), `500` (MCP resource failure)
+- **Maps to**: `skill_trend_fetcher` + MCP `news://latest` resource
+
+**POST** `/api/v1/skills/content-generator`
+- **Request**: `{ agent_id: UUID, goal: string, channel: enum, style_overrides?: JSON, assets?: string[] }`
+- **Response**: `{ text: string, media_urls?: string[], confidence_score: float, reasoning_trace: string, requires_hitl: boolean }`
+- **Error Codes**: `400` (invalid params), `404` (agent not found), `500` (generation failure)
+- **Maps to**: `skill_content_generator` + MCP `generate_image`/`generate_video` tools
+
+**POST** `/api/v1/skills/commerce-manager`
+- **Request**: `{ agent_id: UUID, action: enum['transfer', 'check_balance', 'deploy_token'], to_address?: string, amount_usdc?: float, asset?: string, memo?: string }`
+- **Response**: `{ status: enum['approved', 'blocked'], tx_hash?: string, error?: string }`
+- **Error Codes**: `400` (invalid action), `402` (budget exceeded), `404` (agent not found), `500` (MCP failure)
+- **Maps to**: `skill_commerce_manager` + CFO Judge + Coinbase AgentKit MCP
+
+### Error Response Schema
+
+All errors follow this structure:
+```json
+{
+  "error": {
+    "code": "ERROR_CODE",
+    "message": "Human-readable message",
+    "details": {},
+    "timestamp": "ISO8601",
+    "request_id": "UUID"
+  }
+}
+```
+
+Common error codes:
+- `400` Bad Request (invalid input)
+- `401` Unauthorized (missing/invalid token)
+- `403` Forbidden (tenant isolation, insufficient permissions)
+- `404` Not Found (resource doesn't exist)
+- `409` Conflict (OCC state_version mismatch, duplicate)
+- `402` Payment Required (budget exceeded)
+- `429` Too Many Requests (rate limit)
+- `500` Internal Server Error
+- `503` Service Unavailable (MCP server down, circuit breaker)
+
+### Authentication & Authorization
+
+- **AuthN**: JWT tokens issued by `/api/v1/auth/login` (tenant_id + user_id in claims)
+- **AuthZ**: Role-based (`network_operator`, `human_reviewer`, `developer`, `system`); tenant_id enforced at DB layer
+- **Agent-to-Service**: Service tokens (no user context) for Planner/Worker/Judge internal calls
+
 ## APIs / MCP Tool Contracts (examples)
 - `post_content`: `{platform: enum[twitter,instagram,threads], text_content: string, media_urls?: string[], disclosure_level?: enum[automated,assisted,none]}`
 - `reply_content`: `{platform, in_reply_to_id: string, text_content: string}`
