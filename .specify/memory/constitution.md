@@ -1,50 +1,49 @@
-# [PROJECT_NAME] Constitution
-<!-- Example: Spec Constitution, TaskFlow Constitution, etc. -->
+# Project Chimera Constitution
 
 ## Core Principles
 
-### [PRINCIPLE_1_NAME]
-<!-- Example: I. Library-First -->
-[PRINCIPLE_1_DESCRIPTION]
-<!-- Example: Every feature starts as a standalone library; Libraries must be self-contained, independently testable, documented; Clear purpose required - no organizational-only libraries -->
+### I. Spec-Driven Development (Non‑Negotiable)
+- All implementation work starts from ratified specs in `specs/` and the SRS.
+- New behavior must first be expressed as requirements and contracts (JSON schemas, ERDs, HITL rules) before code is written.
+- Ambiguity is treated as a defect; clarify via Spec Kit (`/speckit.clarify`, `/speckit.specify`, `/speckit.plan`) before implementation.
 
-### [PRINCIPLE_2_NAME]
-<!-- Example: II. CLI Interface -->
-[PRINCIPLE_2_DESCRIPTION]
-<!-- Example: Every library exposes functionality via CLI; Text in/out protocol: stdin/args → stdout, errors → stderr; Support JSON + human-readable formats -->
+### II. MCP-First Integration
+- The agent core never calls third‑party APIs directly; all external I/O flows through MCP servers and tools.
+- Social platforms, vector stores, news feeds, and commerce are accessed only via MCP, so reasoning logic stays decoupled from vendors.
 
-### [PRINCIPLE_3_NAME]
-<!-- Example: III. Test-First (NON-NEGOTIABLE) -->
-[PRINCIPLE_3_DESCRIPTION]
-<!-- Example: TDD mandatory: Tests written → User approved → Tests fail → Then implement; Red-Green-Refactor cycle strictly enforced -->
+### III. Hierarchical Swarm & HITL Governance
+- Planner → Worker → Judge (FastRender pattern) is the default architecture for all agent features.
+- Judges enforce confidence tiers, sensitive‑topic routing, OCC, and CFO budget checks; humans remain the ultimate escalation path.
+- Any change to Planner/Worker/Judge behavior must preserve these governance guarantees.
 
-### [PRINCIPLE_4_NAME]
-<!-- Example: IV. Integration Testing -->
-[PRINCIPLE_4_DESCRIPTION]
-<!-- Example: Focus areas requiring integration tests: New library contract tests, Contract changes, Inter-service communication, Shared schemas -->
+### IV. Test-First & Quality Gates
+- Tests in `tests/` define the API and data contracts (e.g., skills interfaces, trend structures) before implementations exist.
+- It is acceptable and expected for tests to fail until the feature is built; removing or weakening tests requires spec updates.
+- CI (GitHub Actions) and Docker are the canonical execution paths for tests and spec checks.
 
-### [PRINCIPLE_5_NAME]
-<!-- Example: V. Observability, VI. Versioning & Breaking Changes, VII. Simplicity -->
-[PRINCIPLE_5_DESCRIPTION]
-<!-- Example: Text I/O ensures debuggability; Structured logging required; Or: MAJOR.MINOR.BUILD format; Or: Start simple, YAGNI principles -->
+### V. Security, Traceability & Observability
+- Secrets (API keys, wallet material) never live in the repo; use environment variables or secret managers.
+- Engineers and agents must explain their plan and cite relevant specs/ and research docs before substantial changes.
+- Telemetry (Tenx MCP Sense, logs, audit events) is required for debugging and post‑hoc analysis.
 
-## [SECTION_2_NAME]
-<!-- Example: Additional Constraints, Security Requirements, Performance Standards, etc. -->
+## Additional Constraints & Standards
+- Tech stack: Python, Redis, Postgres, NoSQL store, Weaviate, Coinbase AgentKit, MCP servers as defined in `specs/technical.md`.
+- Multi‑tenancy and data isolation are mandatory for all new capabilities.
+- Swarm and commerce features must respect cost/budget constraints and regulatory transparency (AI disclosure, auditability).
 
-[SECTION_2_CONTENT]
-<!-- Example: Technology stack requirements, compliance standards, deployment policies, etc. -->
-
-## [SECTION_3_NAME]
-<!-- Example: Development Workflow, Review Process, Quality Gates, etc. -->
-
-[SECTION_3_CONTENT]
-<!-- Example: Code review requirements, testing gates, deployment approval process, etc. -->
+## Development Workflow & Reviews
+- Use Spec Kit commands (`/speckit.constitution`, `/speckit.specify`, `/speckit.plan`, `/speckit.tasks`, `/speckit.implement`) to structure work.
+- Every significant change:
+  - References the relevant spec sections and SRS paragraphs.
+  - Updates tests and/or contracts alongside implementation.
+  - Runs `make test` (locally or via Docker) before merging.
+- Code review and AI review (e.g., CodeRabbit) must check for spec alignment, security, and adherence to this constitution.
 
 ## Governance
-<!-- Example: Constitution supersedes all other practices; Amendments require documentation, approval, migration plan -->
+- This constitution supersedes ad‑hoc practices; exceptions must be documented in specs and justified.
+- Amendments require:
+  - A spec update describing the motivation and impact.
+  - Agreement on migration or deprecation paths.
+  - Version bump in this file with dates and rationale.
 
-[GOVERNANCE_RULES]
-<!-- Example: All PRs/reviews must verify compliance; Complexity must be justified; Use [GUIDANCE_FILE] for runtime development guidance -->
-
-**Version**: [CONSTITUTION_VERSION] | **Ratified**: [RATIFICATION_DATE] | **Last Amended**: [LAST_AMENDED_DATE]
-<!-- Example: Version: 2.1.1 | Ratified: 2025-06-13 | Last Amended: 2025-07-16 -->
+**Version**: 1.0.0 | **Ratified**: 2026‑02‑05 | **Last Amended**: 2026‑02‑05
