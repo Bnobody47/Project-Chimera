@@ -13,18 +13,62 @@
 
 ### Branching Strategy
 
+**Main Branch**: `main` (protected, requires PR + CI passing)
+
+**Branch Types**:
 - **Feature branches**: `feature/{spec-number}-{description}` (e.g., `feature/001-planner-service`)
 - **Bug fixes**: `fix/{issue-number}-{description}`
 - **Spec updates**: `specs/{area}-{description}` (e.g., `specs/security-authn`)
 - **Infra changes**: `infra/{description}` (e.g., `infra/ci-security-scan`)
+- **Skills**: `skills/{skill-name}-{change}` (e.g., `skills/trend-fetcher-edge-cases`)
 
-Keep commits small and topical. Reference spec sections in commit messages:
+**Branch Lifecycle**:
+1. Create branch from `main`: `git checkout -b feature/001-planner-service`
+2. Make small, focused commits (one logical change per commit)
+3. Push branch: `git push origin feature/001-planner-service`
+4. Create PR with description linking to specs
+5. CI must pass (test, lint, security, spec-check)
+6. Get review approval
+7. Squash merge to `main`
+8. Delete branch after merge
+
+Keep commits small and topical. Each commit should:
+- Address one logical change (one function, one test, one spec section)
+- Reference spec sections or task numbers
+- Include clear, imperative message
+
+**Commit Message Format**:
+```
+<type>(<scope>): <subject>
+
+<body (optional)>
+
+- Bullet point 1
+- Bullet point 2
+- Links to specs/functional.md#section or Task 2.1
+```
+
+**Types**: `feat`, `fix`, `docs`, `test`, `refactor`, `spec`, `infra`
+
+**Examples**:
 ```
 feat(planner): implement task decomposition per specs/technical.md#planner-service
 
 - Adds POST /api/v1/planner/decompose endpoint
 - Creates Task DAG and pushes to task_queue
 - Links to specs/functional.md#goal-plan-execute-flow
+
+test(skills): add edge case tests for trend_fetcher
+
+- Tests empty niches, invalid threshold, negative lookback
+- Tests MCP resource failure handling
+- Links to specs/functional.md#failure-modes
+
+spec(security): add AuthN/AuthZ flow details
+
+- Documents JWT token issuance and refresh
+- Adds RBAC role permissions table
+- Links to specs/security.md#authentication-authorization
 ```
 
 ### Pull Request Process

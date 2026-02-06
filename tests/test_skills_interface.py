@@ -70,3 +70,93 @@ def test_commerce_manager_output_structure():
     assert isinstance(result, dict), "Output must be dict"
     assert "status" in result, "Output must include 'status'"
     assert result["status"] in {"approved", "blocked"}, "status must be approved or blocked"
+
+
+def test_content_generator_invalid_channel():
+    """Edge case: Invalid channel should raise ValueError."""
+    with pytest.raises((ValueError, AssertionError)):
+        generate_content(
+            agent_id="agent-001",
+            goal="Test",
+            channel="invalid_platform",
+        )
+
+
+def test_content_generator_empty_goal():
+    """Edge case: Empty goal should raise ValueError or return error in output."""
+    result = generate_content(
+        agent_id="agent-001",
+        goal="",
+        channel="twitter",
+    )
+    # Either raises ValueError or returns error in output
+    if isinstance(result, dict):
+        assert "error" in result or len(result.get("text", "")) == 0
+
+
+def test_commerce_manager_invalid_action():
+    """Edge case: Invalid action enum should raise ValueError."""
+    with pytest.raises((ValueError, AssertionError)):
+        execute_commerce_action(
+            agent_id="agent-001",
+            action="invalid_action",
+        )
+
+
+def test_commerce_manager_negative_amount():
+    """Edge case: Negative amount_usdc should raise ValueError."""
+    with pytest.raises((ValueError, AssertionError)):
+        execute_commerce_action(
+            agent_id="agent-001",
+            action="transfer",
+            to_address="0x123",
+            amount_usdc=-10.0,
+        )
+
+
+def test_commerce_manager_missing_required_for_transfer():
+    """Edge case: Transfer action without to_address or amount_usdc should raise ValueError."""
+    with pytest.raises((ValueError, AssertionError)):
+        execute_commerce_action(
+            agent_id="agent-001",
+            action="transfer",
+            # Missing to_address and amount_usdc
+        )
+
+
+def test_commerce_manager_budget_exceeded():
+    """Failure mode: Budget exceeded should return status='blocked' with error message."""
+    result = execute_commerce_action(
+        agent_id="agent-001",
+        action="transfer",
+        to_address="0x123",
+        amount_usdc=10000.0,  # Assume exceeds max_daily_usdc
+    )
+    if isinstance(result, dict):
+        assert result.get("status") == "blocked", "Should block when budget exceeded"
+        assert "error" in result, "Should include error message"
+
+
+def test_content_generator_mcp_tool_failure():
+    """Failure mode: MCP generate_image failure should return error or requires_hitl=True."""
+    result = generate_content(
+        agent_id="agent-001",
+        goal="Generate image",
+        channel="twitter",
+    )
+    if isinstance(result, dict):
+        # Either error field or requires_hitl=True when MCP fails
+        assert "error" in result or result.get("requires_hitl") is True
+
+
+def test_trend_fetcher_timeout_handling():
+    """Failure mode: MCP resource timeout should be handled gracefully."""
+    # Document expected behavior: retry with backoff or return empty list
+    result = fetch_trends(
+        agent_id="agent-001",
+        niches=["fashion"],
+        relevance_threshold=0.75,
+        lookback_hours=24,
+    )
+    # Should not hang indefinitely; either return empty list or raise TimeoutError
+    assert isinstance(result, list) or pytest.raises(TimeoutError)

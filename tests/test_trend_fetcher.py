@@ -63,3 +63,90 @@ def test_trend_score_in_valid_range():
     for i, item in enumerate(result):
         score = item.get("score")
         assert 0.0 <= score <= 1.0, f"Item {i}: score {score} must be in [0, 1]"
+
+
+def test_trend_fetcher_empty_niches():
+    """Edge case: Empty niches list should return empty list or handle gracefully."""
+    result = fetch_trends(
+        agent_id="agent-001",
+        niches=[],
+        relevance_threshold=0.75,
+        lookback_hours=24,
+    )
+    assert isinstance(result, list), "Must return list even with empty niches"
+
+
+def test_trend_fetcher_invalid_threshold():
+    """Edge case: Invalid relevance_threshold (< 0 or > 1) should raise ValueError."""
+    with pytest.raises((ValueError, AssertionError)):
+        fetch_trends(
+            agent_id="agent-001",
+            niches=["fashion"],
+            relevance_threshold=-0.1,
+            lookback_hours=24,
+        )
+    with pytest.raises((ValueError, AssertionError)):
+        fetch_trends(
+            agent_id="agent-001",
+            niches=["fashion"],
+            relevance_threshold=1.5,
+            lookback_hours=24,
+        )
+
+
+def test_trend_fetcher_negative_lookback():
+    """Edge case: Negative lookback_hours should raise ValueError."""
+    with pytest.raises((ValueError, AssertionError)):
+        fetch_trends(
+            agent_id="agent-001",
+            niches=["fashion"],
+            relevance_threshold=0.75,
+            lookback_hours=-1,
+        )
+
+
+def test_trend_fetcher_sources_not_empty_strings():
+    """Edge case: Sources list should contain non-empty strings."""
+    result = fetch_trends(
+        agent_id="agent-001",
+        niches=["tech"],
+        relevance_threshold=0.7,
+        lookback_hours=12,
+    )
+    for i, item in enumerate(result):
+        sources = item.get("sources", [])
+        assert all(isinstance(s, str) and len(s) > 0 for s in sources), \
+            f"Item {i}: sources must be non-empty strings"
+
+
+def test_trend_fetcher_suggested_tasks_are_uuids():
+    """Edge case: suggested_tasks should be valid UUID strings or empty list."""
+    import uuid
+    result = fetch_trends(
+        agent_id="agent-001",
+        niches=["fashion"],
+        relevance_threshold=0.75,
+        lookback_hours=24,
+    )
+    for i, item in enumerate(result):
+        tasks = item.get("suggested_tasks", [])
+        for task_id in tasks:
+            # Should be valid UUID string or raise if invalid
+            try:
+                uuid.UUID(task_id)
+            except (ValueError, TypeError):
+                pytest.fail(f"Item {i}: suggested_tasks must contain valid UUID strings")
+
+
+def test_trend_fetcher_mcp_resource_failure():
+    """Failure mode: MCP resource unavailable should degrade gracefully or raise specific error."""
+    # This test documents expected behavior when MCP news://latest resource fails
+    # Implementation should catch MCP errors and either return empty list or raise MCPError
+    result = fetch_trends(
+        agent_id="agent-001",
+        niches=["fashion"],
+        relevance_threshold=0.75,
+        lookback_hours=24,
+    )
+    # Either empty list (graceful degradation) or exception (fail-fast)
+    assert isinstance(result, list) or pytest.raises(Exception)

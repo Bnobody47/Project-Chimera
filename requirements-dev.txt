@@ -1,0 +1,6 @@
+# Development dependencies (locked)
+# Generated via: uv pip compile pyproject.toml --extra dev -o requirements-dev.txt
+
+-r requirements.txt
+ruff>=0.1,<1.0
+mypy>=1.0,<2.0

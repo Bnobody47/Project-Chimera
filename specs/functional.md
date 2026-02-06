@@ -145,6 +145,101 @@ description: Functional requirements and user stories for Chimera.
 
 **Link to Spec**: `specs/frontend.md` - "Screens & Wireframes", `specs/technical.md` - "Backend API Contract"
 
+### Scenario: Failure Modes & Error Recovery
+
+**Given** an MCP tool call times out after 30 seconds  
+**When** the Worker retries with exponential backoff (1s, 2s, 4s)  
+**Then** after 3 retries, the task is marked `status='failed'`  
+**And** a self-healing triage agent requeues the task with `priority='low'`  
+**And** an `audit_event` is created with `action='task_failed_retry'`
+
+**Given** a Judge detects OCC conflict (`state_version` mismatch)  
+**When** the conflict occurs during Result commit  
+**Then** the commit is rejected (`409 Conflict`)  
+**And** the task is re-queued for Planner with updated `state_version`  
+**And** the Worker's Result is discarded (not committed)
+
+**Given** a Worker attempts to call an MCP tool that doesn't exist  
+**When** the tool name is invalid or server unavailable  
+**Then** the Worker raises `MCPToolNotFoundError`  
+**And** the task is marked `status='failed'`  
+**And** an `audit_event` is created with `action='mcp_tool_error'`
+
+**Given** Redis queue is unavailable  
+**When** the Planner attempts to push tasks  
+**Then** tasks are buffered in-memory (max 100 tasks)  
+**And** after buffer full, Planner pauses and logs alert  
+**And** system degrades gracefully (no data loss)
+
+**Performance Threshold**: Error recovery (retry → requeue) completes in < 2 seconds
+
+**Reliability Threshold**: System availability ≥ 99.9% (excluding planned maintenance)
+
+**Link to Spec**: `specs/technical.md` - "Error Handling"
+
+### Scenario: Edge Cases & Boundary Conditions
+
+**Given** an agent has no `SOUL.md` file  
+**When** the Worker attempts to load persona  
+**Then** the system uses default persona template  
+**And** logs warning: "SOUL.md not found for agent {id}, using defaults"  
+**And** continues execution (graceful degradation)
+
+**Given** a campaign goal exceeds 1000 characters  
+**When** the Planner attempts to decompose  
+**Then** the goal is truncated to 1000 chars with ellipsis  
+**And** a warning is logged  
+**And** decomposition proceeds with truncated goal
+
+**Given** a Worker receives a task with `required_resources` pointing to unavailable MCP resource  
+**When** the resource is not found or returns 404  
+**Then** the Worker skips that resource (if optional) or marks task `status='failed'` (if required)  
+**And** logs resource availability issue
+
+**Given** Weaviate returns 0 memories for a semantic query  
+**When** the Worker assembles context  
+**Then** the system uses persona + Redis short-term context only  
+**And** continues execution (no error)
+
+**Given** an agent's wallet balance is 0 USDC  
+**When** a commerce transaction is attempted  
+**Then** the CFO Judge blocks the transaction (`status='blocked'`, `error='Insufficient balance'`)  
+**And** no transaction is sent to MCP layer
+
+**Link to Spec**: `specs/technical.md` - "Error Handling", `specs/security.md` - "Resource Limits"
+
+### Scenario: Performance & Scalability
+
+**Given** 1000 concurrent agents are active  
+**When** each agent generates 10 tasks/hour  
+**Then** the system processes 10,000 tasks/hour without degradation  
+**And** Planner service CPU < 80%, memory < 8GB  
+**And** Worker pool autoscales to handle load
+
+**Given** HITL queue has 500 pending items  
+**When** reviewers process items at 10/minute  
+**Then** queue depth decreases linearly  
+**And** no items are lost or duplicated  
+**And** oldest items are prioritized (FIFO)
+
+**Given** a viral event triggers 10x normal traffic  
+**When** MCP rate limits are hit  
+**Then** requests are queued with `retry_after` header respected  
+**And** system throttles gracefully (no cascading failures)
+
+**Performance Thresholds**:
+- Task processing: 1000 tasks/second per Worker pool
+- API response time: p95 < 200ms, p99 < 500ms
+- Database query time: p95 < 50ms for indexed queries
+- MCP tool call: p95 < 2s, p99 < 5s
+
+**Reliability Thresholds**:
+- Uptime: 99.9% (excluding maintenance)
+- Data loss: 0% (all transactions ACID)
+- Task completion rate: ≥ 95% (excluding intentional rejections)
+
+**Link to Spec**: `specs/technical.md` - "Performance Targets"
+
 ## Edge Cases & Errors
 - API timeouts: retry with backoff; self-healing triage agent requeues failures.
 - State drift: Judge rejects if `state_version` changed; Planner re-plans.

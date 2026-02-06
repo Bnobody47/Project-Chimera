@@ -1,0 +1,9 @@
+# Project Chimera - Locked dependencies
+# Generated via: uv pip compile pyproject.toml -o requirements.txt
+# Update: Run 'uv pip compile pyproject.toml -o requirements.txt' after pyproject.toml changes
+
+pydantic>=2.0,<3.0
+pytest>=7.0,<8.0
+redis>=5.0,<6.0
+weaviate-client>=4.0,<5.0
+mcp>=1.0,<2.0
