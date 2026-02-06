@@ -1,155 +1,209 @@
 ---
-description: Security specification: AuthN/AuthZ, rate limits, content moderation, forbidden actions.
+description: Dedicated security spec for Project Chimera — AuthN/AuthZ, secrets, rate limits, content safety, agent containment boundaries. Tied to APIs and runtime.
 ---
 
 # Security Specification
 
-## Authentication & Authorization
+This document directly addresses the security requirement for the Agentic Infrastructure Challenge: AuthN/AuthZ, secrets handling, rate limiting, content safety, and **explicit agent containment boundaries** (forbidden actions, escalation triggers, resource limits) tied to APIs and the runtime environment.
 
-### Authentication Flow (AuthN)
+---
 
-**JWT Token Issuance**:
-- **Endpoint**: `POST /api/v1/auth/login`
-- **Request**: `{ email: string, password: string, tenant_id: UUID }`
-- **Response**: `{ access_token: JWT, refresh_token: JWT, expires_in: 3600 }`
-- **Token Claims**: `{ sub: user_id, tenant_id: UUID, role: enum, iat: timestamp, exp: timestamp }`
-- **Storage**: HTTP-only cookies (preferred) or localStorage with XSS protection
+## 1. Authentication (AuthN)
 
-**Token Refresh**:
-- **Endpoint**: `POST /api/v1/auth/refresh`
-- **Request**: `{ refresh_token: JWT }`
-- **Response**: `{ access_token: JWT }`
-- **Expiry**: Refresh tokens valid 7 days, rotate on use
+### 1.1 Human Users (Dashboard / API)
 
-**Service-to-Service Auth**:
-- **Method**: API keys in `X-API-Key` header
-- **Scope**: Internal Planner/Worker/Judge services only
-- **Rotation**: Keys rotated quarterly, stored in secret manager
+| Concern | Specification | Runtime / API Tie-In |
+|--------|----------------|----------------------|
+| **Token type** | JWT (RS256 or HS256) | Issued by `POST /api/v1/auth/login` |
+| **Claims** | `sub` (user_id), `tenant_id`, `role`, `iat`, `exp` | Validated on every API request via middleware |
+| **Storage** | HTTP-only cookie or Authorization header | Frontend must not store in localStorage if XSS risk |
+| **Refresh** | Refresh token, 7-day expiry, rotate on use | `POST /api/v1/auth/refresh` |
+| **Login rate limit** | 5 attempts per 15 min per IP | Enforced at API gateway; returns `429` + `Retry-After` |
 
-### Authorization (AuthZ)
+**API contract**:
+- `POST /api/v1/auth/login` → `{ access_token, refresh_token, expires_in }`
+- `POST /api/v1/auth/refresh` → `{ access_token }`
+- All other API requests require header: `Authorization: Bearer <access_token>`
 
-**Role-Based Access Control (RBAC)**:
+### 1.2 Service-to-Service (Planner / Worker / Judge)
 
-| Role | Permissions | Endpoints |
-|------|-------------|-----------|
-| `network_operator` | View agents, create campaigns, view analytics | `/api/v1/agents`, `/api/v1/campaigns`, `/api/v1/analytics/*` |
-| `human_reviewer` | View HITL queue, approve/reject content | `/api/v1/judge/hitl-queue`, `/api/v1/judge/hitl-decision` |
-| `developer` | Full API access, manage MCP servers | All endpoints except `/api/v1/commerce/wallet/*/transfer` |
-| `system` | Internal service calls only | Planner/Worker/Judge endpoints |
+| Concern | Specification | Runtime Tie-In |
+|--------|----------------|----------------|
+| **Method** | API key in `X-API-Key` header | Injected at deploy time from secret manager |
+| **Scope** | Internal services only; not exposed to user-facing API | Env: `INTERNAL_API_KEY` |
+| **Rotation** | Quarterly; old key valid 7 days overlap | Secret manager versioning |
 
-**Tenant Isolation**:
-- All queries filtered by `tenant_id` from JWT claims
-- Cross-tenant access returns `403 Forbidden`
-- Database row-level security (RLS) enforces tenant boundaries
+**Runtime**: Keys MUST be read from environment (e.g. `INTERNAL_API_KEY`). No keys in code or config files in repo.
 
-**Endpoint Permissions**:
+---
 
-- **GET `/api/v1/agents`**: Requires `network_operator` or `developer`; tenant-scoped
-- **POST `/api/v1/agents/{id}/campaigns`**: Requires `network_operator`; tenant-scoped
-- **GET `/api/v1/judge/hitl-queue`**: Requires `human_reviewer` or `developer`; tenant-scoped
-- **POST `/api/v1/judge/hitl-decision`**: Requires `human_reviewer`; tenant-scoped
-- **POST `/api/v1/commerce/wallet/{id}/transfer`**: Requires `developer` + CFO Judge approval; tenant-scoped
-- **POST `/api/v1/skills/*`**: Requires `system` (internal) or `developer` (testing)
+## 2. Authorization (AuthZ)
 
-## Rate Limits
+### 2.1 Role-Based Access (RBAC)
 
-### Per-Endpoint Limits
+| Role | Allowed API Endpoints | Denied |
+|------|------------------------|--------|
+| `network_operator` | `GET/POST /api/v1/agents`, `GET/POST /api/v1/agents/{id}/campaigns`, `GET /api/v1/analytics/*` | HITL decision, wallet transfer, internal services |
+| `human_reviewer` | `GET /api/v1/judge/hitl-queue`, `POST /api/v1/judge/hitl-decision` | Agent creation, campaign creation, wallet, analytics write |
+| `developer` | All read/write except `POST /api/v1/commerce/wallet/*/transfer` (requires CFO approval) | Direct wallet transfer without CFO check |
+| `system` | Planner/Worker/Judge internal endpoints only | Any user-facing API |
+
+### 2.2 Per-Endpoint Permissions
+
+- **GET `/api/v1/agents`**: `network_operator` or `developer`; response filtered by JWT `tenant_id`.
+- **POST `/api/v1/agents/{id}/campaigns`**: `network_operator`; `tenant_id` from JWT must match agent’s tenant.
+- **GET `/api/v1/judge/hitl-queue`**: `human_reviewer` or `developer`; tenant-scoped.
+- **POST `/api/v1/judge/hitl-decision`**: `human_reviewer` only; `tenant_id` enforced.
+- **POST `/api/v1/commerce/wallet/{id}/transfer`**: `developer` only; request still passes through CFO Judge; tenant-scoped.
+- **POST `/api/v1/planner/decompose`**, **POST `/api/v1/worker/*`**, **POST `/api/v1/judge/review`**: `system` (internal) or `developer` (testing); require `X-API-Key` when not user JWT.
+
+### 2.3 Tenant Isolation
+
+- Every API handler MUST resolve tenant from JWT (or service context) and filter all DB/Weaviate/Redis queries by `tenant_id`.
+- Cross-tenant access returns **403 Forbidden**.
+- PostgreSQL RLS (row-level security) MUST be enabled on all tenant-scoped tables.
+
+---
+
+## 3. Secrets Handling
+
+| Secret Type | Where Stored | How Injected | Forbidden |
+|-------------|--------------|--------------|-----------|
+| DB credentials | AWS Secrets Manager / Vault | Env at runtime: `POSTGRES_*`, `REDIS_*` | Never in code, config, or logs |
+| Wallet private keys | Secret manager, per agent | Injected into Worker/CFO runtime only; never logged | Never in DB or API response |
+| MCP server tokens (Twitter, Weaviate, etc.) | Secret manager or env | Env: `TWITTER_*`, `WEAVIATE_*`, etc. | Never in `.cursor/mcp.json` values; use `${VAR}` only |
+| JWT signing key | Secret manager | Env: `JWT_SECRET` or `JWT_PUBLIC_KEY` | Never in repo |
+| Internal API key | Secret manager | Env: `INTERNAL_API_KEY` | Never in repo |
+
+**Runtime rule**: Application MUST fail fast at startup if any required secret env var is missing (no default secrets).
+
+**Code rule**: No `os.environ.get("SECRET", "fallback")` for real secrets; use `os.environ["SECRET"]` or exit.
+
+---
+
+## 4. Rate Limiting
+
+### 4.1 API Rate Limits (per user or tenant)
 
 | Endpoint | Limit | Window | Response |
 |----------|-------|--------|----------|
-| `POST /api/v1/auth/login` | 5 requests | 15 minutes | `429 Too Many Requests` |
-| `GET /api/v1/agents` | 100 requests | 1 minute | `429` + `Retry-After: 60` |
-| `POST /api/v1/planner/decompose` | 20 requests | 1 minute | `429` + `Retry-After: 60` |
-| `POST /api/v1/worker/submit-result` | 200 requests | 1 minute | `429` + `Retry-After: 30` |
-| `GET /api/v1/judge/hitl-queue` | 50 requests | 1 minute | `429` + `Retry-After: 60` |
-| `POST /api/v1/commerce/wallet/*/transfer` | 10 requests | 1 hour | `429` + `Retry-After: 3600` |
+| `POST /api/v1/auth/login` | 5 | 15 min | `429` + `Retry-After: 900` |
+| `GET /api/v1/agents` | 100 | 1 min | `429` + `Retry-After: 60` |
+| `POST /api/v1/planner/decompose` | 20 | 1 min | `429` + `Retry-After: 60` |
+| `POST /api/v1/worker/submit-result` | 200 | 1 min | `429` + `Retry-After: 30` |
+| `GET /api/v1/judge/hitl-queue` | 50 | 1 min | `429` + `Retry-After: 60` |
+| `POST /api/v1/judge/hitl-decision` | 100 | 1 min | `429` + `Retry-After: 60` |
+| `POST /api/v1/commerce/wallet/*/transfer` | 10 | 1 hour | `429` + `Retry-After: 3600` |
 
-**Implementation**: Redis-based sliding window counter per `user_id` or `tenant_id`
+**Implementation**: Redis key `ratelimit:{tenant_id}:{endpoint}` with sliding window or fixed window counter.
 
-### Agent-Level Limits
+### 4.2 Runtime / Agent-Level Limits
 
-- **Tasks per agent**: Max 1000 pending tasks per agent
-- **MCP tool calls**: Max 100 calls/minute per agent (enforced at MCP server layer)
-- **Wallet transactions**: Max 10 transactions/day per agent (CFO Judge enforces)
+| Resource | Limit | Enforced Where |
+|----------|-------|----------------|
+| Pending tasks per agent | 1000 | Planner when pushing to `task_queue` |
+| MCP tool calls per agent | 100/min | MCP server layer (or wrapper) |
+| Wallet transactions per agent | 10/day | CFO Judge + Redis `daily_tx_count` |
+| Weaviate vectors per agent | 10,000 | `upsert_memory` tool / Weaviate schema |
+| Campaign budget (USDC) | Configurable per tenant; default max $10,000 | CFO Judge + `wallet_policies` table |
 
-## Content Moderation Pipeline
+---
 
-### Step-by-Step Moderation Flow
+## 5. Content Safety
 
-1. **Pre-Generation Filter** (Planner):
-   - Check goal against forbidden topics list (politics, hate speech, illegal content)
-   - If match → reject task creation, log to audit
+### 5.1 Pre-Generation (Planner)
 
-2. **Post-Generation Filter** (Judge):
-   - **Confidence Score**: < 0.70 → auto-reject, < 0.90 → HITL queue
-   - **Sensitive Topic Detection**: Keyword + semantic analysis (LLM-lite)
-     - Politics, health advice, financial advice, legal claims → mandatory HITL
-   - **Character Consistency**: Vision model checks media likeness
-   - **Disclosure Check**: Ensures `is_generated` flag set
+- Before creating tasks, Planner MUST check campaign goal against **forbidden topics** list.
+- If match: do not create task; log to `audit_events` with `action=goal_rejected_forbidden_topic`.
+- Forbidden topics: politics, hate speech, illegal content, explicit adult content (list maintained in config/spec).
 
-3. **Human Review** (HITL):
-   - Reviewer sees content + confidence score + reasoning trace
-   - Actions: Approve, Reject, Request Edit, Escalate to Legal
-   - All decisions logged to `audit_events`
+### 5.2 Post-Generation (Judge)
 
-4. **Post-Publish Monitoring**:
-   - Track engagement metrics for flagged patterns
-   - Auto-pause agent if engagement drops < threshold (possible shadowban)
+- **Confidence score**: &lt; 0.70 → auto-reject; 0.70–0.90 → HITL queue; ≥ 0.90 → auto-approve (unless sensitive).
+- **Sensitive topic detection** (keyword + semantic): politics, health advice, financial advice, legal claims → **mandatory HITL** regardless of score.
+- **Disclosure**: Every published post MUST set platform `is_generated` (or equivalent) to true.
+- **Character consistency**: Vision Judge MUST verify media likeness before publish; on failure, reject and re-queue.
 
-### Forbidden Actions & Content
+### 5.3 Human-in-the-Loop (HITL)
 
-**Forbidden Actions**:
-- Publishing content without `is_generated` disclosure flag
-- Executing wallet transactions exceeding `max_daily_usdc` or `max_tx_usdc`
-- Accessing cross-tenant data (enforced at DB layer)
-- Bypassing HITL for sensitive topics (hardcoded in Judge logic)
+- All HITL decisions (approve/reject/edit/escalate) MUST be logged to `audit_events` with `actor_id` (human), `action`, and payload.
+- Escalation to Legal/Compliance is a supported action and MUST be recorded.
 
-**Forbidden Content Topics**:
-- Political endorsements or commentary
-- Medical/health advice (beyond general wellness)
-- Financial investment advice
-- Legal claims or guarantees
-- Hate speech, harassment, discrimination
-- Copyrighted material without license
+### 5.4 Content Moderation Pipeline (Summary)
 
-**Resource Limits**:
-- **Agent memory**: Max 10,000 Weaviate vectors per agent
-- **Campaign budget**: Max $10,000 USDC per campaign (configurable per tenant)
-- **Daily API calls**: Max 50,000 MCP tool calls per tenant/day
-- **Storage**: Max 100GB video metadata per tenant
+1. Planner: reject goals matching forbidden topics.  
+2. Judge: apply confidence + sensitive-topic rules → auto-approve, HITL, or reject.  
+3. HITL: human approves/rejects/edits; optional escalate.  
+4. Post-publish: monitor engagement; auto-pause agent if anomaly (e.g. possible shadowban).
 
-## Security Controls
+---
 
-### Input Validation
+## 6. Agent Containment Boundaries
 
-- **SQL Injection**: Parameterized queries only, ORM (SQLAlchemy) enforces
-- **XSS**: React escapes by default; sanitize user inputs in text fields
-- **CSRF**: SameSite cookies + CSRF tokens for state-changing operations
-- **Path Traversal**: Validate file paths, restrict to allowed directories
+### 6.1 Forbidden Actions (Explicit List)
 
-### Secret Management
+Agents (Planner/Worker/Judge) MUST NOT:
 
-- **API Keys**: Stored in AWS Secrets Manager / HashiCorp Vault
-- **Wallet Private Keys**: Encrypted at rest, injected at runtime only
-- **Database Credentials**: Rotated monthly, never logged
-- **MCP Server Tokens**: Per-server secrets, scoped to specific tools
+- Publish content without setting the platform’s AI disclosure flag (`is_generated`).
+- Execute a wallet transaction that would exceed `wallet_policies.max_daily_usdc` or `max_tx_usdc`.
+- Access or query data for another tenant (enforced by `tenant_id` in all queries).
+- Bypass HITL for content that triggered sensitive-topic or low-confidence rules.
+- Call any external API or service except via the MCP layer (no direct SDK calls from agent code).
+- Read or log secrets (API keys, wallet keys, DB URLs).
+- Create tasks with goal text longer than 10,000 characters (truncate and log).
+- Submit a Result without a valid `state_version` for OCC.
 
-### Audit & Compliance
+### 6.2 Escalation Triggers (When to Escalate to Human or System)
 
-- **All Actions Logged**: `audit_events` table records actor_id, action, payload, timestamp
-- **Immutable Logs**: Append-only, retention 7 years (compliance)
-- **On-Chain Ledger**: Financial transactions recorded on Base/Ethereum (immutable)
-- **Access Logs**: IP addresses, user agents logged for security incidents
+| Trigger | Action |
+|--------|--------|
+| Confidence score &lt; 0.90 | Send to HITL queue (or reject if &lt; 0.70). |
+| Sensitive topic detected | Always send to HITL; do not auto-approve. |
+| CFO Judge: transaction exceeds budget | Reject; log `commerce_blocked`; do not call MCP transfer. |
+| CFO Judge: anomaly pattern (e.g. many failed tx) | Reject and create alert for human review. |
+| OCC conflict (state_version mismatch) | Reject commit; re-queue task to Planner. |
+| MCP tool returns 5xx or timeout repeatedly | Circuit-breaker; pause agent tasks for that tool; alert. |
+| &gt; 10 failed wallet transactions in 1 hour for one agent | Auto-pause agent; escalate to operator. |
 
-### Incident Response
+### 6.3 Resource Limits (Hard Caps)
 
-- **Suspicious Activity**: Auto-pause agent if >10 failed transactions in 1 hour
-- **Data Breach**: Immediate tenant isolation, rotate all secrets, notify stakeholders
-- **Rate Limit Abuse**: Temporary IP ban (1 hour), escalate to permanent if repeated
+| Resource | Limit | Enforced In |
+|----------|-------|-------------|
+| Pending tasks per agent | 1,000 | Planner / `task_queue` |
+| MCP tool calls per agent | 100/min | MCP wrapper / runtime |
+| Wallet transactions per agent | 10/day | CFO Judge + Redis |
+| Weaviate vectors per agent | 10,000 | Weaviate + `upsert_memory` |
+| Campaign budget (USDC) | Per `wallet_policies` | CFO Judge |
+| Daily MCP calls per tenant | 50,000 | Redis counter at API/MCP layer |
+| Video metadata storage per tenant | 100 GB | Storage layer / admin |
 
-## Security Testing
+### 6.4 Runtime Environment Mapping
 
-- **Penetration Testing**: Quarterly external audit
-- **Dependency Scanning**: Dependabot + Snyk for known vulnerabilities
-- **SAST**: CodeQL in CI pipeline
-- **DAST**: OWASP ZAP scans in staging environment
+- **Planner**: Reads goals from API/DB; writes tasks to Redis `task_queue`. Must enforce task-per-agent cap and forbidden-topic check.  
+- **Worker**: Reads tasks from Redis; calls MCP tools only; writes Result to `review_queue`. Must not hold secrets in memory longer than request lifecycle.  
+- **Judge**: Reads from `review_queue`; applies confidence + sensitive-topic rules; writes to HITL or commits to state. Must enforce OCC and disclosure.  
+- **CFO Judge**: Wraps any wallet transfer; reads `wallet_policies` and Redis daily counters; blocks or allows; logs to `audit_events`.
+
+All of the above MUST run with secrets supplied only via environment (or secret manager); no secrets in config files in the repo.
+
+---
+
+## 7. Audit and Compliance
+
+- **Audit log**: Every sensitive action (login, HITL decision, wallet transfer attempt, goal rejection) MUST create an `audit_events` row (actor_id, action, payload, timestamp, state_version).  
+- **Immutability**: Append-only; no updates or deletes.  
+- **Retention**: Per data retention policy (e.g. 7 years for financial/compliance).  
+- **On-chain**: Approved wallet transactions MUST be recorded on-chain (e.g. Base); ledger is immutable.
+
+---
+
+## 8. Security Testing and CI
+
+- **SAST**: CodeQL (or equivalent) in CI on every push.  
+- **Dependency scanning**: Dependabot / Snyk; no high/critical vulnerabilities in main.  
+- **Secrets scan**: Pre-commit or CI must scan for accidental secret patterns; fail if found.  
+- **AuthZ tests**: Automated tests that verify 403 for cross-tenant and wrong-role access.
+
+---
+
+This security spec is the single source of truth for AuthN/AuthZ, secrets, rate limits, content safety, and agent containment. All APIs and runtime components (Planner, Worker, Judge, CFO Judge, MCP layer) MUST align with it.
