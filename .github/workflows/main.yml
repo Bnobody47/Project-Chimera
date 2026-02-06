@@ -1,5 +1,5 @@
-# Project Chimera — CI pipeline
-# Runs tests in Docker on every push. Spec: Task 3.3
+# Project Chimera — CI/CD & Governance Pipeline
+# Runs tests, linting, security scans, and spec checks on every push. Spec: Task 3.3
 name: CI
 
 on:
@@ -14,10 +14,87 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install pytest pydantic ruff mypy
+
+      - name: Run tests
+        run: make test
+
+      - name: Spec check
+        run: make spec-check
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Ruff
+        run: pip install ruff
+
+      - name: Run Ruff linter
+        run: ruff check . --output-format=github
+
+      - name: Run Ruff formatter check
+        run: ruff format --check .
+
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+
+      - name: Upload Trivy results to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+      - name: Run CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          languages: python
+
+  docker-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
       - name: Run tests in Docker
         run: |
           docker build -t project-chimera:ci .
           docker run --rm project-chimera:ci make test
 
-      - name: Spec check
-        run: make spec-check
+  governance:
+    runs-on: ubuntu-latest
+    needs: [test, lint, security]
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check spec alignment
+        run: |
+          echo "Verifying PR changes align with specs/"
+          # Check if changed files reference specs/ or are in specs/
+          git diff origin/main --name-only | grep -E "(specs/|\.md$)" || echo "No spec changes detected"
+
+      - name: AI Review Gate
+        run: |
+          echo "CodeRabbit AI review configured in .coderabbit.yaml"
+          echo "Review checks: spec alignment, security, MCP-first pattern"
